@@ -124,8 +124,11 @@ class Data(Path):
         """
         augmented_df = copy.copy(df)
         augmented_answers = np.ones(len(df))
+        columns = ['sentence1', 'sentence2', 'sentence3', 'sentence4']
 
-        for column_name in ['sentence1', 'sentence2', 'sentence3', 'sentence4']:
+        self.n_dummy = len(columns)
+
+        for column_name in columns:
             fake_df = copy.copy(df)
             fake_answers = np.zeros(len(fake_df))
 

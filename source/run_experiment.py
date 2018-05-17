@@ -11,7 +11,7 @@ def main():
     data = Data(data_limit=None)
     print("data loaded.")
 
-    classifier = Classifier(max_seqlen = data.max_seqlen, vocab_size = data.vocab_size)
+    classifier = Classifier(max_seqlen = data.max_seqlen, vocab_size = data.vocab_size, n_dummy = data.n_dummy)
     classifier.build_model()
     print("model built.")
 

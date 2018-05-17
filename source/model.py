@@ -8,22 +8,28 @@ from keras.layers.convolutional import Conv1D
 from keras.layers.pooling import MaxPooling2D
 
 class Classifier():
-    def __init__(self, max_seqlen, vocab_size):
+    def __init__(self, max_seqlen, vocab_size, n_dummy):
         self.embed_dim = 128
         self.hidden_dim = 64
         self.feature_dim = 32
         self.model = None
 
         self.batchsize = 64
-        self.epochs = 10
+        self.epochs = 5
 
         self.n_stories = 4
         self.n_options = 1
 
         self.max_seqlen = max_seqlen
         self.vocab_size = vocab_size
+        self.n_dummy = n_dummy
+        self.class_weight = {0: 1.,
+                             1: float(self.n_dummy)}
+        # if the loss for class 1 were (pred-1)**2, then class weight makes it ((pred-1)**2) * (self.n_dummy)/1.
+        # it increases the loss w.r.t the balance of training data labels
 
     def build_model(self):
+        # TODO: make it faster
         # keeping each sentence in list is making GPU a lot slower than CPU.
         # by making them 3d batch ?
 
@@ -56,7 +62,9 @@ class Classifier():
     def train(self, inputs, outputs):
         if self.model == None:
             raise ValueError("self.model is None. run build_model() first.")
-        hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize, shuffle=True, validation_split=0.2, verbose=2)
+        hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize,
+                              shuffle=True, validation_split=0.2, verbose=2, class_weight=self.class_weight)
+        # model.fit() returns history object which contains all the validation scores and so on.
         return hist
 
     def test(self, inputs, batchsize):
