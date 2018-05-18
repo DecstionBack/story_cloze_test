@@ -8,16 +8,17 @@ save_model_path = datetime.now().strftime('%m%d%Y_%H%M')
 save_model_path = os.path.join(Path.model_save_path, save_model_path)
 
 def main():
-    data = Data(data_limit=None)
+    data = Data(data_limit=100)
     print("data loaded.")
 
     classifier = Classifier(max_seqlen = data.max_seqlen, vocab_size = data.vocab_size, n_dummy = data.n_dummy)
     classifier.build_model()
     print("model built.")
 
-    inputs = [data.train_x[:, i, :] for i in range(5)]
+    # inputs = [data.train_x[:, i, :] for i in range(5)]
+    inputs = [data.train_x[:, :4, :], data.train_x[:, 4:, :]]
     answers = data.y
-
+    print('answers.shape:', answers.shape)
 
     classifier.train(inputs, answers)
 
@@ -34,7 +35,9 @@ def main():
     print("model saving...")
     if not os.path.exists(save_model_path):
         os.mkdir(save_model_path)
-    classifier.save_model(save_path="mymodel.h5")
+
+    save_path = os.path.join(save_model_path, "mymodel.h5")
+    classifier.save_model(save_path=save_path)
     print("model saved.")
 
 if __name__ == "__main__":

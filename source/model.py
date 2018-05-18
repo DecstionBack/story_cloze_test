@@ -3,7 +3,7 @@ from path import Path
 import numpy as np
 from keras.models import Model
 # from keras.utils import plot_model
-from keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, Flatten, concatenate, multiply
+from keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, Flatten, Reshape, Lambda, TimeDistributed, concatenate, multiply
 from keras.layers.convolutional import Conv1D
 from keras.layers.pooling import MaxPooling2D
 
@@ -33,28 +33,34 @@ class Classifier():
         # keeping each sentence in list is making GPU a lot slower than CPU.
         # by making them 3d batch ?
 
-        story_inputs = [Input(shape=(self.max_seqlen,)) for _ in range(self.n_stories)]
-        option_inputs = [Input(shape=(self.max_seqlen,)) for _ in range(self.n_options)]
+        story_inputs = Input(shape=(4, self.max_seqlen))
+        option_input = Input(shape=(1, self.max_seqlen))
+        inputs = concatenate([story_inputs, option_input], axis=1)
+        embed_layer = TimeDistributed(Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
+                                                input_length=self.max_seqlen, mask_zero=True))
 
-        inputs = story_inputs + option_inputs
-        embed_layer = Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
-                                input_length=self.max_seqlen, mask_zero=True)
-        birnn_layer = Bidirectional(LSTM(self.hidden_dim))
-        dense_layer = Dense(self.feature_dim, activation='relu')
-        ending_dense_layer = Dense(self.n_stories * self.feature_dim, activation='relu')
+        birnn_layer = TimeDistributed(Bidirectional(LSTM(self.hidden_dim)))
+        dense_layer = TimeDistributed(Dense(self.feature_dim, activation='relu'))
+        ending_dense_layer = TimeDistributed(Dense(self.n_stories * self.feature_dim, activation='relu'))
 
-        embeddings = [embed_layer(_input) for _input in inputs]
-        birnn_outputs = [birnn_layer(embedding) for embedding in embeddings]
-        fc_outputs = [dense_layer(birnn_output) for birnn_output in birnn_outputs[:self.n_stories]]
-        ending_features = ending_dense_layer(birnn_outputs[4])
+        embeddings = embed_layer(inputs) # (None, 5, 30) -> (None, 5, 30, output_dim)
+        birnn_outputs = birnn_layer(embeddings) # (None, 5, 30, output_dim) -> (None, 5, hidden_dim)
 
-        story_features = concatenate(fc_outputs)
+        story_outputs = Lambda(lambda x: x[:, :4, :], output_shape=(4, self.hidden_dim))(birnn_outputs)
+        ending_outputs = Lambda(lambda x: x[:, 4:, :], output_shape=(1, self.hidden_dim))(birnn_outputs)
+
+        fc_outputs = dense_layer(story_outputs) # (None, 4, hidden_num) -> (None, 4, feature_dim)
+        ending_features = ending_dense_layer(ending_outputs) # (None, 1, hidden_num) -> (None, 1, 4 * feature_num)
+        story_features = Reshape((1, 4 * self.feature_dim))(fc_outputs)
         story_features = multiply([story_features, ending_features])  # TODO make it more exact like paper do
+        story_features = Flatten()(story_features)
         #         conv = Conv1D(16, kernel_size=3, activation='relu')(story_features)
         fc = Dense(1, activation='sigmoid')(story_features)
 
-        model = Model(inputs=inputs, outputs=fc)
+        print('fc.shape: ', fc.shape)
+        model = Model(inputs=[story_inputs, option_input], outputs=fc)
         model.compile(optimizer='sgd', loss='binary_crossentropy', metrics=['accuracy'])
+
         # plot_model(model, Path.image_save_path)
         print(model.summary())
         self.model = model
@@ -62,6 +68,7 @@ class Classifier():
     def train(self, inputs, outputs):
         if self.model == None:
             raise ValueError("self.model is None. run build_model() first.")
+
         hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize,
                               shuffle=True, validation_split=0.2, verbose=2, class_weight=self.class_weight)
         # model.fit() returns history object which contains all the validation scores and so on.

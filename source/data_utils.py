@@ -142,11 +142,9 @@ class Data(Path):
 
     def load_train_text(self, datapath):
         """
-
         :param datapath:
         :return:
         """
-
         df = pd.read_csv(datapath)
 
         if self.data_limit:
