@@ -30,9 +30,7 @@ class Classifier():
         # it increases the loss w.r.t the balance of training data labels
 
     def build_model(self):
-        # TODO: make it faster
-        # keeping each sentence in list is making GPU a lot slower than CPU.
-        # by making them 3d batch ?
+        # TODO: use pretrained embedding
 
         story_inputs = Input(shape=(4, self.max_seqlen))
         option_input = Input(shape=(1, self.max_seqlen))
