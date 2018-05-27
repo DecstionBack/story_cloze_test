@@ -9,11 +9,17 @@ from keras.layers.convolutional import Conv1D
 from keras.layers.pooling import MaxPooling2D
 
 class Classifier():
-    def __init__(self, max_seqlen, vocab_size, n_dummy):
+    def __init__(self, max_seqlen, vocab_size, n_dummy, pretrained_embedding,
+                 params_logger, train_logger
+                 ):
         self.embed_dim = 128
         self.hidden_dim = 64
         self.feature_dim = 32
         self.model = None
+        self.use_pretrained_embedding = True
+        self.pretrained_embedding = pretrained_embedding
+        self.params_logger = params_logger
+        self.train_logger = train_logger
 
         self.batchsize = 64
         self.epochs = 20
@@ -26,20 +32,28 @@ class Classifier():
         self.n_dummy = n_dummy
         self.class_weight = {0: 1.,
                              1: float(self.n_dummy)}
+
         # if the loss for class 1 were (pred-1)**2, then class weight makes it ((pred-1)**2) * (self.n_dummy)/1.
         # it increases the loss w.r.t the balance of training data labels
 
     def build_model(self):
-        # TODO: make it faster
-        # keeping each sentence in list is making GPU a lot slower than CPU.
-        # by making them 3d batch ?
-
+        # TODO: make it faster -> DONE to some extent
         story_inputs = Input(shape=(4, self.max_seqlen))
         option_input = Input(shape=(1, self.max_seqlen))
         inputs = concatenate([story_inputs, option_input], axis=1)
-        embed_layer = TimeDistributed(Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
+
+        # TimeDistributed enables to apply Embedding function uniformly for each of sentence{1, 2, 3, 4, 5}
+        if self.use_pretrained_embedding:
+            # override the embed dimension size
+            self.embed_dim = self.pretrained_embedding.shape[1]
+
+            embed_layer = TimeDistributed(Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
+                                                    input_length=self.max_seqlen, mask_zero=True,
+                                                    weights=[self.pretrained_embedding], trainable=False))
+        else:
+            embed_layer = TimeDistributed(Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
                                                 input_length=self.max_seqlen, mask_zero=True))
-        #TODO:  make LSTM ignore padded words
+        #TODO: make LSTM ignore <pad>
         birnn_layer = TimeDistributed(Bidirectional(LSTM(self.hidden_dim, input_shape=(5, 30, self.embed_dim))))
         dense_layer = TimeDistributed(Dense(self.feature_dim, activation='relu'))
         ending_dense_layer = TimeDistributed(Dense(self.n_stories * self.feature_dim, activation='relu'))
@@ -63,9 +77,12 @@ class Classifier():
         story_features = Flatten()(fc_outputs)
         story_features = multiply([story_features, ending_features])  # TODO make it more exact like paper do
 
+        # we only need the likelihood of being true ending so its squashed into scalar
         fc = Dense(1, activation='sigmoid')(story_features)
 
         model = Model(inputs=[story_inputs, option_input], outputs=fc)
+
+        # some post said RMSprop is better for RNN task
         rmsprop = optimizers.RMSprop()
         model.compile(optimizer=rmsprop, loss='binary_crossentropy', metrics=['accuracy'])
 

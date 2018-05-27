@@ -5,6 +5,7 @@ import pandas as pd
 import csv
 import copy
 import re
+import logging
 
 from collections import Counter
 
@@ -17,7 +18,7 @@ from keras.layers.pooling import MaxPooling2D
 from path import Path
 
 class Data(Path):
-    def __init__(self, data_limit=None, prepare_dummy=True):
+    def __init__(self, logger, data_limit=None, prepare_dummy=True):
         """
         :param data_limit: if specified, only top n dataset will be loaded.
         :param prepare_dummy: if specified, augment train dataset with fake ending.
@@ -42,11 +43,13 @@ class Data(Path):
         self.max_seqlen = 30
         self.prepare_dummy = prepare_dummy
         self.data_limit = data_limit
+        self.logger = logger
 
         self.unk = "<UNK>"
         self.bos = "<BOS>"
         self.eos = "<EOS>"
         self.pad = "<PAD>"
+        # TODO: do we really need bos, eos, pad ?
 
         self.train_dataset, self.y = self.load_train_text(Path.train_file_path)
         self.vocab = self.create_vocab()  # used in test
@@ -55,13 +58,14 @@ class Data(Path):
         self.i2w_dict = self.create_i2w_dict()  # used in test
         self.train_dataset_ids = self.convert_w2i_dataset(self.train_dataset)
         self.train_x = self.train_dataset_ids
+        self.embedding_matrix = self.create_pretrained_embedding_matrix(Path.glove_path)
 
         self.test_dataset, self.test_answers = self.load_test_text(Path.val_file_path)
         self.test_dataset_ids = self.convert_w2i_dataset(self.test_dataset)
         self.test_x, self.test_e1, self.test_e2 = self.split_test_dataset(self.test_dataset_ids)
 
         # report about variables
-        print('''
+        params_string = '''
         ==================================================
         words with frequency less than {} is not in vocab.
         maximum sentencelength: {}
@@ -72,7 +76,8 @@ class Data(Path):
         len(vocab):     {}
         ==================================================
         '''.format(self.most_common, self.max_seqlen, self.train_x.shape,
-                   self.test_x.shape, self.test_e1.shape, self.test_e2.shape, len(self.vocab)))
+                   self.test_x.shape, self.test_e1.shape, self.test_e2.shape, len(self.vocab))
+        self.logger.info(params_string)
 
     def split_test_dataset(self, dataset):
         # assuming dataset.shape = (datanum, 4 + 1 + 1, 30)
@@ -90,6 +95,44 @@ class Data(Path):
         string = re.sub("(['.,!?])", r' \g<1>', string)
 
         return string
+
+    def create_pretrained_embedding_matrix(self, datapath):
+        """
+        the file format should be 'word0, v_0, v_1, ..., v_n \n word1, v_0, ...'
+        :param datapath: pretrained embedding path (should have fixed format)
+        :return: embedding matrix (np.ndarray)
+        the i-th row of matrix should represent the embedding for word whose id is i.
+        self.w2i_dict
+        """
+        self.logger.info("creating embedding matrix...")
+        word_to_embedding = {}
+
+        # create the word2embedding dictionary
+        f = open(datapath)
+        with open(datapath, 'r') as f:
+            for line in f:
+                values = line.split()
+                word = values[0]
+                vector = np.asarray(values[1:], dtype='float32')
+                word_to_embedding[word] = vector
+
+        # create the embedding matrix by the above dictionary
+        embedding_dim = len(vector)
+        embedding_matrix = np.zeros((len(self.w2i_dict), embedding_dim))
+
+        for word, index in self.w2i_dict.items():
+            embedding = word_to_embedding.get(word)
+
+            if embedding is None:
+                # if the word is in dataset but not found in pretrained vector, leave the corresponding row as zero vectors
+                self.logger.info("word: {} not found in pretrained embedding.".format(word))
+
+            else:
+                embedding_matrix[index] = embedding
+
+
+        return embedding_matrix
+
 
     def load_test_text(self, datapath):
         """
@@ -145,6 +188,10 @@ class Data(Path):
         :param datapath:
         :return:
         """
+        self.logger.info("loading dataset...")
+        if self.data_limit:
+            self.logger.info("\tdata_limit:{}".format(self.data_limit))
+
         df = pd.read_csv(datapath)
 
         if self.data_limit:
@@ -179,9 +226,11 @@ class Data(Path):
         return lines, answers
 
     def create_vocab(self):
+        self.logger.info("creating vocabulary...")
         flattened_dataset = [word for sentences in self.train_dataset for sentence in sentences[1:] for word in
                              sentence]
         vocab = dict(Counter(flattened_dataset), most_common=self.most_common)
+        self.logger.info("\twords with frequency lower than {} will be discarded.".format(self.most_common))
         vocab[self.unk] = 1
         return vocab
 
@@ -196,7 +245,6 @@ class Data(Path):
             if w2i_vocab.get(key) == None:
                 w2i_vocab[key] = i
                 i += 1
-
         return w2i_vocab
 
     def create_i2w_dict(self):
@@ -225,8 +273,21 @@ class Data(Path):
         get the depth of the list (unused for now)
         """
         if isinstance(l, list):
-            return 1 + max(depth(item) for item in l)
+            return 1 + max(self.depth(item) for item in l)
         else:
             return 0
 
         # TODO: is test data converted to ids correctly?
+
+def setup_logger(logger_name, file_name, level, add_console = False):
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(level)
+    handler = logging.FileHandler(file_name)
+
+    if add_console:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        logger.addHandler(console_handler)
+
+    logger.addHandler(handler)
+    return logger
