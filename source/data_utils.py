@@ -174,7 +174,8 @@ class Data(Path):
         """
         augmented_df = copy.copy(df)
         augmented_answers = np.ones(len(df))
-        columns = ['sentence1', 'sentence2', 'sentence3', 'sentence4']
+        # columns = ['sentence1', 'sentence2', 'sentence3', 'sentence4']
+        columns = ['sentence1']
 
         self.n_dummy = len(columns)
 

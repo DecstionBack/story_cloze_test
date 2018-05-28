@@ -59,23 +59,30 @@ class Classifier():
                                           , name='embedding')
 
         #TODO: make LSTM ignore <pad>
-        #TODO: check the dimension
-        birnn_layer = TimeDistributed(Bidirectional(LSTM(self.hidden_dim, input_shape=(5, 30, self.embed_dim))), name="t_birirectionallstm")
+        birnn_layer = TimeDistributed(Bidirectional(LSTM(self.hidden_dim, input_shape=(5, self.max_seqlen, self.embed_dim), return_sequences=True)), name="t_birirectionallstm")
+        flatten_story_layer = TimeDistributed(Flatten())
+        flatten_ending_layer = TimeDistributed(Flatten())
         dense_layer = TimeDistributed(Dense(self.feature_dim, activation='relu'), name='dense')
         ending_dense_layer = TimeDistributed(Dense(self.n_stories * self.feature_dim, activation='relu'))
 
-        embeddings = embed_layer(inputs) # (None, 5, 30) -> (None, 5, 30, output_dim)
+        embeddings = embed_layer(inputs) # (None, 5, self.max_seqlen)  -> (None, 5, self.max_seqlen, output_dim)
 
-        birnn_outputs = birnn_layer(embeddings) # (None, 5, 30, output_dim) -> (None, 5, hidden_dim)
+        birnn_outputs = birnn_layer(embeddings) # (None, 5, self.max_seqlen, output_dim) -> (None, 5, self.max_seqlen, 2 * hidden_dim)
+        print("birnn_outputs.shape: ", birnn_outputs.shape)
 
-        story_outputs = Lambda(lambda x: x[:, :4, :], output_shape=(4, 2 * self.hidden_dim))(birnn_outputs)
-        ending_outputs = Lambda(lambda x: x[:, 4:, :], output_shape=(1, 2 * self.hidden_dim))(birnn_outputs)
-
+        story_outputs = Lambda(lambda x: x[:, :4, :], output_shape=(4, self.max_seqlen, 2 * self.hidden_dim))(birnn_outputs)
+        ending_outputs = Lambda(lambda x: x[:, 4:, :], output_shape=(1, self.max_seqlen, 2 * self.hidden_dim))(birnn_outputs)
+        print("ending_outputs_before: ", ending_outputs.shape)
         # memo: bidirectional LSTM returns the vector with 2 * self.hidden row size.
         #       when applying lambda layer, if you forget 2 * in output_shape, the batchsize will be doubled instead,
         #       which will cause the error later line.
+        story_outputs = flatten_story_layer(story_outputs) # -> (None, 4, self.max_seqlen * 2 * hidden_num)
+        ending_outputs = flatten_ending_layer(ending_outputs) # -> (?)
 
-        fc_outputs = dense_layer(story_outputs) # (None, 4, hidden_num) -> (None, 4, feature_dim)
+        print("story_outputs.shape: ", story_outputs.shape)
+        print("ending_outputs.shape: ", ending_outputs.shape)
+
+        fc_outputs = dense_layer(story_outputs) # (None, 4, self.max_seqlen * 2 * hidden_num) -> (None, 4, feature_dim)
         ending_features = ending_dense_layer(ending_outputs) # (None, 1, hidden_num) -> (None, 1, 4 * feature_num)
         ending_features = Flatten()(ending_features) # TODO: check this flattening works as expected
         # story_features = Reshape((1, 4 * self.feature_dim))(fc_outputs)
@@ -106,6 +113,8 @@ class Classifier():
             raise ValueError("self.model is None. run build_model() first.")
         hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize,
                               shuffle=True, validation_split=0.2, verbose=1, class_weight=self.class_weight)
+
+        record_limit = 100
         output_dict = {}
         output_dict['inputs'] = inputs
         output_dict['embedding'] = self.embedding_model.predict(inputs)
@@ -121,7 +130,7 @@ class Classifier():
 
     def calculate_accuracy(self, answer1, answer2, gt):
         result = np.argmax(np.concatenate((answer1, answer2), axis=1), axis=1) + 1
-        acc = np.sum(result==gt)
+        acc = np.sum(result == gt)
         return acc
 
     def save_model(self, save_path):

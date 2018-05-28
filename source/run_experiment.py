@@ -26,7 +26,7 @@ train_logger = setup_logger(logger_name='train_logger',
                             )
 
 def main():
-    data = Data(logger=params_logger, data_limit=100)
+    data = Data(logger=params_logger, data_limit=None)
     print("data loaded.")
 
     classifier = Classifier(max_seqlen = data.max_seqlen, vocab_size = data.vocab_size,
