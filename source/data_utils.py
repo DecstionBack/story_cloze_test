@@ -79,6 +79,13 @@ class Data(Path):
                    self.test_x.shape, self.test_e1.shape, self.test_e2.shape, len(self.vocab))
         self.logger.info(params_string)
 
+    def retrieve_data(self):
+        data_dict = {}
+        data_dict['vocab'] = self.vocab
+        data_dict['w2i_dict'] = self.w2i_dict
+        data_dict['embedding_matrix'] = self.embedding_matrix
+        return data_dict
+
     def split_test_dataset(self, dataset):
         # assuming dataset.shape = (datanum, 4 + 1 + 1, 30)
         # TODO: remove hardcoding
@@ -86,7 +93,7 @@ class Data(Path):
 
     def clean_text(self, string):
         """
-        apply lowercasing, inserting space if one of { '.,!? } is found.
+        apply lowercasing, inserting space if one of { '.,!? } is found.x
         :param string:
         :return: string
         """
@@ -279,7 +286,7 @@ class Data(Path):
 
         # TODO: is test data converted to ids correctly?
 
-def setup_logger(logger_name, file_name, level, add_console = False):
+def setup_logger(logger_name, file_name, level, add_console = True):
     logger = logging.getLogger(logger_name)
     logger.setLevel(level)
     handler = logging.FileHandler(file_name)

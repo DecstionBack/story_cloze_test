@@ -5,8 +5,10 @@ from keras.models import Model
 # from keras.utils import plot_model
 from keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, Flatten, Reshape, Lambda, TimeDistributed, concatenate, multiply
 from keras import optimizers
-from keras.layers.convolutional import Conv1D
-from keras.layers.pooling import MaxPooling2D
+from keras import backend as K
+
+def custom_metrics(y_true, y_pred):
+    return K.sum(K.round(y_pred) == y_true)
 
 class Classifier():
     def __init__(self, max_seqlen, vocab_size, n_dummy, pretrained_embedding,
@@ -22,7 +24,7 @@ class Classifier():
         self.train_logger = train_logger
 
         self.batchsize = 64
-        self.epochs = 20
+        self.epochs = 5
 
         self.n_stories = 4
         self.n_options = 1
@@ -49,23 +51,26 @@ class Classifier():
 
             embed_layer = TimeDistributed(Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
                                                     input_length=self.max_seqlen, mask_zero=True,
-                                                    weights=[self.pretrained_embedding], trainable=False))
+                                                    weights=[self.pretrained_embedding], trainable=False)
+                                          , name='embedding')
         else:
             embed_layer = TimeDistributed(Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
-                                                input_length=self.max_seqlen, mask_zero=True))
+                                                    input_length=self.max_seqlen, mask_zero=True)
+                                          , name='embedding')
+
         #TODO: make LSTM ignore <pad>
-        birnn_layer = TimeDistributed(Bidirectional(LSTM(self.hidden_dim, input_shape=(5, 30, self.embed_dim))))
-        dense_layer = TimeDistributed(Dense(self.feature_dim, activation='relu'))
+        #TODO: check the dimension
+        birnn_layer = TimeDistributed(Bidirectional(LSTM(self.hidden_dim, input_shape=(5, 30, self.embed_dim))), name="t_birirectionallstm")
+        dense_layer = TimeDistributed(Dense(self.feature_dim, activation='relu'), name='dense')
         ending_dense_layer = TimeDistributed(Dense(self.n_stories * self.feature_dim, activation='relu'))
 
         embeddings = embed_layer(inputs) # (None, 5, 30) -> (None, 5, 30, output_dim)
-        print('embeddings.shape: ', embeddings.shape)
 
         birnn_outputs = birnn_layer(embeddings) # (None, 5, 30, output_dim) -> (None, 5, hidden_dim)
-        print('birnn_outputs.shape: ', birnn_outputs.shape)
 
         story_outputs = Lambda(lambda x: x[:, :4, :], output_shape=(4, 2 * self.hidden_dim))(birnn_outputs)
         ending_outputs = Lambda(lambda x: x[:, 4:, :], output_shape=(1, 2 * self.hidden_dim))(birnn_outputs)
+
         # memo: bidirectional LSTM returns the vector with 2 * self.hidden row size.
         #       when applying lambda layer, if you forget 2 * in output_shape, the batchsize will be doubled instead,
         #       which will cause the error later line.
@@ -74,18 +79,24 @@ class Classifier():
         ending_features = ending_dense_layer(ending_outputs) # (None, 1, hidden_num) -> (None, 1, 4 * feature_num)
         ending_features = Flatten()(ending_features) # TODO: check this flattening works as expected
         # story_features = Reshape((1, 4 * self.feature_dim))(fc_outputs)
+
         story_features = Flatten()(fc_outputs)
         story_features = multiply([story_features, ending_features])  # TODO make it more exact like paper do
 
         # we only need the likelihood of being true ending so its squashed into scalar
-        fc = Dense(1, activation='sigmoid')(story_features)
+        fc = Dense(1, activation='sigmoid', name='probability')(story_features)
 
         model = Model(inputs=[story_inputs, option_input], outputs=fc)
+
+        # for printing the output of intermediate layer
+        self.embedding_model = Model(inputs=[story_inputs, option_input],
+                                outputs=model.get_layer('embedding').output)
+        self.bilstm_model = Model(inputs=[story_inputs, option_input],
+                             outputs=model.get_layer('t_birirectionallstm').output)
 
         # some post said RMSprop is better for RNN task
         rmsprop = optimizers.RMSprop()
         model.compile(optimizer=rmsprop, loss='binary_crossentropy', metrics=['accuracy'])
-
         # plot_model(model, Path.image_save_path)
         print(model.summary())
         self.model = model
@@ -95,8 +106,12 @@ class Classifier():
             raise ValueError("self.model is None. run build_model() first.")
         hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize,
                               shuffle=True, validation_split=0.2, verbose=1, class_weight=self.class_weight)
-        # model.fit() returns history object which contains all the validation scores and so on.
-        return hist
+        output_dict = {}
+        output_dict['inputs'] = inputs
+        output_dict['embedding'] = self.embedding_model.predict(inputs)
+        output_dict['bilstm'] = self.bilstm_model.predict(inputs)
+        output_dict['probability'] = self.model.predict(inputs)
+        return output_dict
 
     def test(self, inputs, batchsize):
         if self.model == None:
