@@ -24,7 +24,7 @@ class Classifier():
         self.train_logger = train_logger
 
         self.batchsize = 64
-        self.epochs = 5
+        self.epochs = 10
 
         self.n_stories = 4
         self.n_options = 1
@@ -108,18 +108,18 @@ class Classifier():
         print(model.summary())
         self.model = model
 
-    def train(self, inputs, outputs):
+    def train(self, inputs, outputs, save_output=True):
         if self.model == None:
             raise ValueError("self.model is None. run build_model() first.")
         hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize,
                               shuffle=True, validation_split=0.2, verbose=1, class_weight=self.class_weight)
 
-        record_limit = 100
         output_dict = {}
-        output_dict['inputs'] = inputs
-        output_dict['embedding'] = self.embedding_model.predict(inputs)
-        output_dict['bilstm'] = self.bilstm_model.predict(inputs)
-        output_dict['probability'] = self.model.predict(inputs)
+        if save_output:
+            output_dict['inputs'] = inputs
+            output_dict['embedding'] = self.embedding_model.predict(inputs)
+            output_dict['bilstm'] = self.bilstm_model.predict(inputs)
+            output_dict['probability'] = self.model.predict(inputs)
         return output_dict
 
     def test(self, inputs, batchsize):

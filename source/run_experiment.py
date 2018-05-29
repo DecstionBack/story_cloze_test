@@ -18,15 +18,16 @@ if not os.path.exists(log_path):
 
 params_logger = setup_logger(logger_name='params_logger',
                              file_name=os.path.join(log_path, 'params.log'),
-                             level=logging.INFO
+                             level=logging.DEBUG
                              )
+
 train_logger = setup_logger(logger_name='train_logger',
                             file_name=os.path.join(log_path, 'train.log'),
                             level=logging.INFO
                             )
 
 def main():
-    data = Data(logger=params_logger, data_limit=None)
+    data = Data(logger=params_logger, data_limit=100)
     print("data loaded.")
 
     classifier = Classifier(max_seqlen = data.max_seqlen, vocab_size = data.vocab_size,
@@ -44,6 +45,7 @@ def main():
     chancerate = max(val_0_labels_num, val_1_labels_num)/(val_0_labels_num + val_1_labels_num)
     train_logger.info("""validation data has {} samples with 0 and {} samples with 1.\nvalidation chance rate: {}"""
                       .format(val_0_labels_num, val_1_labels_num, chancerate))
+
 
     output_dict = classifier.train(inputs, answers)
     data_dict = data.retrieve_data()
