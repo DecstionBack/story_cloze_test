@@ -39,15 +39,13 @@ class Data(Path):
         self.test_answers: 1 or 2.
         """
 
-        self.most_common = 2
-        self.max_seqlen = 30
+        self.most_common = 3
+        self.max_seqlen = 25
         self.prepare_dummy = prepare_dummy
         self.data_limit = data_limit
         self.logger = logger
 
         self.unk = "<UNK>"
-        self.bos = "<BOS>"
-        self.eos = "<EOS>"
         self.pad = "<PAD>"
         # TODO: do we really need bos, eos, pad ?
 
@@ -136,7 +134,7 @@ class Data(Path):
 
             else:
                 embedding_matrix[index] = embedding
-
+                self.logger.debug("word: {}\t index:{}\t matrix[index]:{}\t w2v[word]:{}".format(word, index, embedding_matrix[index], word_to_embedding[word]))
 
         return embedding_matrix
 
@@ -156,8 +154,8 @@ class Data(Path):
 
         lines = stories.values.tolist()
         if self.max_seqlen:
-            lines = ([[[self.bos] + self.clean_text(string).split() + [self.eos]
-                       + [self.pad] * (self.max_seqlen - len(self.clean_text(string).split()) - 2)
+            lines = ([[[self.pad] * (self.max_seqlen - len(self.clean_text(string).split())) +
+                       self.clean_text(string).split()
                        for string in line] for line in lines])
 
         self.test_story_ids = story_ids
@@ -215,8 +213,8 @@ class Data(Path):
         lines = stories.values.tolist()
 
         if self.max_seqlen:
-            lines = ([[[self.bos] + self.clean_text(string).split() + [self.eos]
-                       + [self.pad] * (self.max_seqlen - len(self.clean_text(string).split()) - 2)
+            lines = ([[ [self.pad] * (self.max_seqlen - len(self.clean_text(string).split()))
+                        + self.clean_text(string).split()
                        for string in line] for line in lines])  # extract 'sentence1 - 5'
         else:
             lines = [[self.clean_text(string).split() for string in line[2:]] for line in lines]
