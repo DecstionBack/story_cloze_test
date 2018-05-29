@@ -95,6 +95,8 @@ class Classifier():
         birnn_outputs_4 = birnn_layer(embeddings_4) # (None, self.max_seqlen, output_dim) -> (None, self.max_seqlen, 2 * hidden_dim)
         birnn_outputs_op = birnn_layer(embeddings_op) # (None, self.max_seqlen, output_dim) -> (None, self.max_seqlen, 2 * hidden_dim)
 
+        # TODO: use whole lstm outputs rather than the last output
+
         story_outputs_op = ending_dense_layer(birnn_outputs_op)  # -> (None, feature_dim)
         story_outputs_1 = multiply([story_outputs_op, dense_layer(birnn_outputs_1)]) # -> (None, feature_dim)
         story_outputs_2 = multiply([story_outputs_op, dense_layer(birnn_outputs_2)])
@@ -104,8 +106,7 @@ class Classifier():
         story_features = concatenate([story_outputs_1, story_outputs_2, story_outputs_3, story_outputs_4])
         # story_features = Reshape((1, 4 * self.feature_dim))(fc_outputs)
 
-        # TODO: multiply for each story sentences
-        # story_features = multiply([story_outputs, story_outputs_op])  # TODO make it more exact like paper do
+        # TODO implement self-weighting (mistrious though)
 
         # we only need the likelihood of being true ending so its squashed into scalar
         fc = Dense(1, activation='sigmoid', name='probability')(story_features)
@@ -125,9 +126,9 @@ class Classifier():
 
         # some post said RMSprop is better for RNN task
 
-        # rmsprop = optimizers.RMSprop()
-        sgd = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-        model.compile(optimizer=sgd, loss='mean_absolute_error', metrics=['accuracy'])
+        rmsprop = optimizers.RMSprop()
+        # sgd = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+        model.compile(optimizer=rmsprop, loss='mean_absolute_error', metrics=['accuracy'])
         # plot_model(model, Path.image_save_path)
         print(model.summary())
         self.model = model
