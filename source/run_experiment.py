@@ -18,7 +18,7 @@ if not os.path.exists(log_path):
 
 params_logger = setup_logger(logger_name='params_logger',
                              file_name=os.path.join(log_path, 'params.log'),
-                             level=logging.DEBUG
+                             level=logging.INFO
                              )
 
 train_logger = setup_logger(logger_name='train_logger',
@@ -27,7 +27,7 @@ train_logger = setup_logger(logger_name='train_logger',
                             )
 
 def main():
-    data = Data(logger=params_logger, data_limit=100)
+    data = Data(logger=params_logger, data_limit=None)
     print("data loaded.")
 
     classifier = Classifier(max_seqlen = data.max_seqlen, vocab_size = data.vocab_size,
@@ -37,9 +37,10 @@ def main():
     classifier.build_model()
     print("model built.")
 
-    inputs = [data.train_x[:, :4, :], data.train_x[:, 4:, :]]
+    # inputs = [data.train_x[:, :4, :], data.train_x[:, 4:, :]]
+    inputs = [data.train_x[:, i, :] for i in range(data.train_x.shape[1])]
     answers = data.y
-    val_answers = answers[int(len(answers)*0.2):]
+    val_answers = answers[-int(len(answers)*0.2):]
     val_1_labels_num = np.sum(val_answers==1)
     val_0_labels_num = np.sum(val_answers==0)
     chancerate = max(val_0_labels_num, val_1_labels_num)/(val_0_labels_num + val_1_labels_num)
@@ -50,8 +51,12 @@ def main():
     output_dict = classifier.train(inputs, answers)
     data_dict = data.retrieve_data()
 
-    test_inputs_with_1 = [data.test_x[:, :4, :], data.test_e1]
-    test_inputs_with_2 = [data.test_x[:, :4, :], data.test_e2]
+    # test_inputs_with_1 = [data.test_x[:, :4, :], data.test_e1]
+    # test_inputs_with_2 = [data.test_x[:, :4, :], data.test_e2]
+
+    test_stories = [data.test_x[:, i, :] for i in range(data.test_x.shape[1])]
+    test_inputs_with_1 = test_stories + [data.test_e1]
+    test_inputs_with_2 = test_stories + [data.test_e2]
 
     answer_with_1 = classifier.test(test_inputs_with_1, batchsize=32)
     answer_with_2 = classifier.test(test_inputs_with_2, batchsize=32)

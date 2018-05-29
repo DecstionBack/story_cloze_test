@@ -24,7 +24,7 @@ class Data(Path):
         :param prepare_dummy: if specified, augment train dataset with fake ending.
 
         others:
-        self.most_common: threshold to remove from dictionary. unfrequent words below this threshold will not be in self.vocab.
+        self.most_common: if specified, top n elements will be used from self.vocab
         self.max_seqlen: 30 as the previous exercise.
 
         self.train_dataset: whole train dataset with strings. length is fixed to 30 by using padding.
@@ -39,7 +39,7 @@ class Data(Path):
         self.test_answers: 1 or 2.
         """
 
-        self.most_common = 3
+        self.most_common = 20000
         self.max_seqlen = 25
         self.prepare_dummy = prepare_dummy
         self.data_limit = data_limit
@@ -51,8 +51,8 @@ class Data(Path):
 
         self.train_dataset, self.y = self.load_train_text(Path.train_file_path)
         self.vocab = self.create_vocab()  # used in test
-        self.vocab_size = len(self.vocab)
-        self.w2i_dict = self.create_w2i_dict()  # used in test
+        self.vocab_size = len(self.vocab) # contain <PAD>
+        self.w2i_dict = self.create_w2i_dict()  # contain <PAD>
         self.i2w_dict = self.create_i2w_dict()  # used in test
         self.train_dataset_ids = self.convert_w2i_dataset(self.train_dataset)
         self.train_x = self.train_dataset_ids
@@ -87,7 +87,7 @@ class Data(Path):
     def split_test_dataset(self, dataset):
         # assuming dataset.shape = (datanum, 4 + 1 + 1, 30)
         # TODO: remove hardcoding
-        return dataset[:, :4, :], dataset[:, 4:5, :], dataset[:, 5:, :]
+        return dataset[:, :4, :], dataset[:, 4, :], dataset[:, 5, :]
 
     def clean_text(self, string):
         """
@@ -235,8 +235,10 @@ class Data(Path):
         self.logger.info("creating vocabulary...")
         flattened_dataset = [word for sentences in self.train_dataset for sentence in sentences[1:] for word in
                              sentence]
-        vocab = dict(Counter(flattened_dataset), most_common=self.most_common)
-        self.logger.info("\twords with frequency lower than {} will be discarded.".format(self.most_common))
+        self.logger.info("==============DEBUG MODE: limiting vocabulary to {}.==================".format(self.most_common))
+        # vocab = dict(Counter(flattened_dataset), most_common=self.most_common)
+        vocab = dict(Counter(flattened_dataset).most_common(self.most_common))
+        self.logger.info("\ttop {} frequent vocabulary (and <UNK>) will be used..".format(self.most_common))
         vocab[self.unk] = 1
         return vocab
 
@@ -251,6 +253,8 @@ class Data(Path):
             if w2i_vocab.get(key) == None:
                 w2i_vocab[key] = i
                 i += 1
+
+        assert len(w2i_vocab) == len(self.vocab)
         return w2i_vocab
 
     def create_i2w_dict(self):
