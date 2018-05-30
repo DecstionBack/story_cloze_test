@@ -10,36 +10,17 @@ import keras
 
 import tensorflow as tf
 
-def custom_metrics(y_true, y_pred):
-    return K.sum(K.round(y_pred) == y_true)
-
 class Customtrainingreporter(keras.callbacks.Callback):
     """
-    custom calll back class for model.fit().
+    custom calll back class for model.fit(). not used currently
     ref: https://keras.io/callbacks/
     """
-    def __init__(self, inputs, logger):
-        self.input_data = inputs
+
+    def __init__(self, logger):
         self.logger = logger
-
-    def on_epoch_begin(self, epoch, logs=None):
-        self.gradients = []
-
-    def on_batch_end(self, batch, logs=None):
-        gradients = self.check_gradient()
-        self.gradients.append(gradients)
 
     def on_epoch_end(self, epoch, logs=None):
         self.logger.info(len(self.gradients))
-
-        self.logger.info("gradients[0]:")
-        self.logger.info(self.gradients[0])
-
-        self.logger.info("gradients[-1]:")
-        self.logger.info(self.gradients[-1])
-
-        self.logger.info("all gradients:")
-        self.logger.info(self.gradients)
 
     def check_gradient(self):
         output = self.model.output
@@ -54,9 +35,11 @@ class Customtrainingreporter(keras.callbacks.Callback):
 
 
 class Classifier():
-    def __init__(self, max_seqlen, vocab_size, n_dummy, pretrained_embedding,
+    def __init__(self, model_name, max_seqlen, vocab_size, n_dummy, pretrained_embedding,
                  params_logger, train_logger
                  ):
+        self.available_models = ['niko', 'scnn']
+        self.model_name = model_name
         self.embed_dim = 128
         self.hidden_dim = 64
         self.feature_dim = 32
@@ -67,7 +50,7 @@ class Classifier():
         self.train_logger = train_logger
 
         self.batchsize = 64
-        self.epochs = 5
+        self.epochs = 50
 
         self.n_stories = 4
         self.n_options = 1
@@ -81,11 +64,80 @@ class Classifier():
         else:
             self.class_weight = None
 
+        params_string = """
+        model: {}
+        batchsize: {}
+        epochs: {}
+        max_seqlen: {}
+        vocab_size: {}
+        """.format(self.model_name, self.batchsize, self.epochs, self.max_seqlen, self.vocab_size)
+        self.train_logger.info("")
+
         # if the loss for class 1 were (pred-1)**2, then class weight makes it ((pred-1)**2) * (self.n_dummy)/1.
         # it increases the loss w.r.t the balance of training data labels
 
-    def build_scnn(self):
+    def build_model(self):
+        if self.model_name == 'niko':
+            self._build_niko()
+
+        elif self.model_name == 'scnn':
+            self._build_scnn()
+        else:
+            raise IOError("model should be picked from {}".format(self.available_models))
+        self.train_logger.info("model: {} built.".format(self.model_name))
+
+    def _build_niko(self):
         # TODO: make it faster -> DONE to some extent
+        story1_input = Input(shape=(self.max_seqlen,), name="story1")
+        story2_input = Input(shape=(self.max_seqlen,), name="story2")
+        story3_input = Input(shape=(self.max_seqlen,), name="story3")
+        story4_input = Input(shape=(self.max_seqlen,), name="story4")
+        story_op_input = Input(shape=(self.max_seqlen,), name="story_op")
+
+        inputs = [story1_input, story2_input, story3_input, story4_input, story_op_input]
+        if not self.use_pretrained_embedding:
+            raise ValueError("you have to specify the embeddings.")
+
+        self.embed_dim = self.pretrained_embedding.shape[1]
+        story_embed_layer = Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
+                                input_length= 4 * self.max_seqlen, mask_zero=True,
+                                weights=[self.pretrained_embedding], trainable=False,
+                                name='story_embedding')
+
+        op_embed_layer = Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
+                                input_length= self.max_seqlen, mask_zero=True,
+                                weights=[self.pretrained_embedding], trainable=False,
+                                name='op_embedding')
+
+        ave_layer = Lambda(lambda x: K.mean(x, axis=1, keepdims=False))
+        dense_layer = Dense(50, activation='relu') # hard code units since its specified as 200-250.
+        sf_layer = Dense(1, activation='sigmoid')
+
+        C_input = concatenate([story1_input, story2_input, story3_input, story4_input]) # (None, self.max_seqlen) -> (None, self.max_seqlen * 4)
+
+        embeddings = story_embed_layer(C_input)
+        C_embeddings = ave_layer(embeddings) # -> (None, self.max_seqlen * 4, self.embed_dim) -> (None, self.embed_dim)
+        op_embeddings = ave_layer(op_embed_layer(story_op_input))
+        print("C_embeddings.shape: ", C_embeddings.shape)
+
+        embeddings = concatenate([C_embeddings, op_embeddings])
+        #TODO: they might have used relu in this embedding layer
+        print("embeddings.shape: ", embeddings.shape)
+
+        hidden_feature = dense_layer(embeddings)
+        pred = sf_layer(hidden_feature)
+        sgd = optimizers.SGD(lr=0.04)
+        # add regularizer as specified in the paper
+
+        model = Model(inputs=inputs, outputs=pred)
+        model.compile(optimizer=sgd, loss='mean_squared_error', metrics=['accuracy'])
+
+        self.embedding_model = Model(inputs = inputs, outputs = embeddings)
+        print(model.summary())
+        self.model = model
+
+    def _build_scnn(self):
+        # TODO: too dirty. make it faster somehow
         story1_input = Input(shape=(self.max_seqlen,), name="story1")
         story2_input = Input(shape=(self.max_seqlen,), name="story2")
         story3_input = Input(shape=(self.max_seqlen,), name="story3")
@@ -181,13 +233,15 @@ class Classifier():
         print(model.summary())
         self.model = model
 
-    def train(self, inputs, outputs, small_inputs, save_output=True):
-        gradient_reporter = Customtrainingreporter(small_inputs, self.train_logger)
+    def train(self, inputs, outputs, save_output, save_path):
         if self.model == None:
             raise ValueError("self.model is None. run build_model() first.")
+
+        modelsave_callback = keras.callbacks.ModelCheckpoint(save_path, monitor='val_loss', verbose=0, save_best_only=False, save_weights_only=False, mode='auto', period=5)
+
         hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize,
                               shuffle=True, validation_split=0.2, verbose=1,
-                              class_weight=self.class_weight, callbacks=[])
+                              class_weight=self.class_weight, callbacks=[modelsave_callback])
         output_dict = {}
         if save_output:
             output_dict['inputs'] = inputs
