@@ -19,6 +19,20 @@ from keras.layers.pooling import MaxPooling2D
 from path import Path
 
 class Data(Path):
+    # TODO: following
+    """
+    data part:
+    - currently we convert all the name in training data into either one of <m0>, <f0>, <p>, to make learning easier.
+    to reverege this, we should do this same procedure into test data when loading test dataset.
+
+    - since <m0> <f0> <p> is not recorded in pretrained word embedding, we should allocate some non zero vector
+    (e.g. average the embeddings of human names)
+
+    training part:
+
+
+    """
+
     def __init__(self, logger, data_limit=None, prepare_dummy=True):
         """
         :param data_limit: if specified, only top n dataset will be loaded.
@@ -42,7 +56,7 @@ class Data(Path):
 
         self.most_common = 20000
         self.max_seqlen = 25
-        self.n_dummy = 0
+        self.n_dummy = 0 # will be updated in subsequent function
         self.prepare_dummy = prepare_dummy
         self.data_limit = data_limit
         self.logger = logger
@@ -65,7 +79,8 @@ class Data(Path):
         self.test_x, self.test_e1, self.test_e2 = self.split_test_dataset(self.test_dataset_ids)
 
         # report about variables
-        params_string = '''
+        params_string = ''
+        params_string += '''
         ==================================================
         words with frequency less than {} is not in vocab.
         maximum sentencelength: {}
@@ -77,7 +92,10 @@ class Data(Path):
         ==================================================
         '''.format(self.most_common, self.max_seqlen, self.train_x.shape,
                    self.test_x.shape, self.test_e1.shape, self.test_e2.shape, len(self.vocab))
+        params_string += "\n".join(["{}: {}".format(key, val)
+                                  for key, val in Path.__dict__.items() if key[0] != '_'])
         self.logger.info(params_string)
+        self.logger.info("data loaded.")
 
     def retrieve_data(self):
         data_dict = {}
@@ -151,7 +169,7 @@ class Data(Path):
         story_ids = df['InputStoryid'].tolist()
         stories = (df[['InputSentence1', 'InputSentence2', 'InputSentence3', 'InputSentence4',
                        'RandomFifthSentenceQuiz1', 'RandomFifthSentenceQuiz2']])
-        answers = df['AnswerRightEnding'].tolist()
+        answers = np.array(df['AnswerRightEnding'].tolist())
 
         lines = stories.values.tolist()
         if self.max_seqlen:
@@ -194,17 +212,35 @@ class Data(Path):
         :param datapath:
         :return:
         """
-        self.logger.info("loading dataset...")
+        self.logger.info("loading dataset...(assuming 5 fake endings for each stories")
         if self.data_limit:
             self.logger.info("\tdata_limit:{}".format(self.data_limit))
 
         df = pd.read_csv(datapath)
-
         if self.data_limit:
             df = df.loc[:self.data_limit, :]
 
-        # story_ids = df['storyid'].tolist()
-        # story_titles = df['storytitle']  # extract only 'title'
+
+        stories = df[['sentence1', 'sentence2', 'sentence3', 'sentence4', 'sentence5']]
+        answers = df['is_real_ending']
+
+        lines = stories.values.tolist()
+        if self.max_seqlen:
+            lines = ([[ [self.pad] * (self.max_seqlen - len(self.clean_text(string).split()))
+                        + self.clean_text(string).split()
+                       for string in line] for line in lines])  # extract 'sentence1 - 5'
+        else:
+            raise AttributeError("specify max seqlen.")
+
+        lines = np.array(lines)
+
+        # shuffle the data
+        random_indices = np.random.permutation(lines.shape[0])
+        lines = lines[random_indices]
+        answers = answers[random_indices]
+
+        self.n_dummy = 5
+        """
         stories = df[['sentence1', 'sentence2', 'sentence3', 'sentence4', 'sentence5']]
         answers = np.ones(len(stories)) # because 'sentence5' is always true ending.
 
@@ -228,14 +264,14 @@ class Data(Path):
 
         # self.train_story_ids = story_ids
         # self.train_story_titles = story_titles
-
+        """
         return lines, answers
 
     def create_vocab(self):
         self.logger.info("creating vocabulary...")
         flattened_dataset = [word for sentences in self.train_dataset for sentence in sentences[1:] for word in
                              sentence]
-        self.logger.info("==============DEBUG MODE: limiting vocabulary to {}.==================".format(self.most_common))
+        self.logger.info("============== limiting vocabulary to top {}.==================".format(self.most_common))
         # vocab = dict(Counter(flattened_dataset), most_common=self.most_common)
         vocab = dict(Counter(flattened_dataset).most_common(self.most_common))
         self.logger.info("\ttop {} frequent vocabulary (and <UNK>) will be used..".format(self.most_common))
