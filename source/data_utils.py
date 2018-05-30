@@ -6,6 +6,7 @@ import csv
 import copy
 import re
 import logging
+from sklearn.utils import shuffle
 
 from collections import Counter
 
@@ -41,6 +42,7 @@ class Data(Path):
 
         self.most_common = 20000
         self.max_seqlen = 25
+        self.n_dummy = 0
         self.prepare_dummy = prepare_dummy
         self.data_limit = data_limit
         self.logger = logger
@@ -138,7 +140,6 @@ class Data(Path):
 
         return embedding_matrix
 
-
     def load_test_text(self, datapath):
         """
         loads sentences from datapath and adding bos, eos, pad.
@@ -180,8 +181,7 @@ class Data(Path):
         for column_name in columns:
             fake_df = copy.copy(df)
             fake_answers = np.zeros(len(fake_df))
-
-            fake_df['sentence5'] = df[column_name]
+            fake_df['sentence5'] = shuffle(df[column_name])
             augmented_df = augmented_df.append(fake_df, ignore_index=True)
             augmented_answers = np.concatenate((augmented_answers, fake_answers), axis=0)
 

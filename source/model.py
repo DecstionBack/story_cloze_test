@@ -6,9 +6,52 @@ from keras.models import Model
 from keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, Flatten, Reshape, Lambda, TimeDistributed, concatenate, multiply
 from keras import optimizers
 from keras import backend as K
+import keras
+
+import tensorflow as tf
 
 def custom_metrics(y_true, y_pred):
     return K.sum(K.round(y_pred) == y_true)
+
+class Customtrainingreporter(keras.callbacks.Callback):
+    """
+    custom calll back class for model.fit().
+    ref: https://keras.io/callbacks/
+    """
+    def __init__(self, inputs, logger):
+        self.input_data = inputs
+        self.logger = logger
+
+    def on_epoch_begin(self, epoch, logs=None):
+        self.gradients = []
+
+    def on_batch_end(self, batch, logs=None):
+        gradients = self.check_gradient()
+        self.gradients.append(gradients)
+
+    def on_epoch_end(self, epoch, logs=None):
+        self.logger.info(len(self.gradients))
+
+        self.logger.info("gradients[0]:")
+        self.logger.info(self.gradients[0])
+
+        self.logger.info("gradients[-1]:")
+        self.logger.info(self.gradients[-1])
+
+        self.logger.info("all gradients:")
+        self.logger.info(self.gradients)
+
+    def check_gradient(self):
+        output = self.model.output
+        variable_tensors = self.model.trainable_weights
+        # print("variable_tensors: ", variable_tensors)
+        gradients = K.gradients(output, variable_tensors)
+        sess = tf.InteractiveSession()
+        sess.run(tf.global_variables_initializer())
+        evaluated_gradients = sess.run(gradients, feed_dict={self.model.inputs[i]: d for i, d in enumerate(self.input_data)})
+        evaluated_gradients = [np.sum(grad) for grad in evaluated_gradients]
+        return evaluated_gradients
+
 
 class Classifier():
     def __init__(self, max_seqlen, vocab_size, n_dummy, pretrained_embedding,
@@ -26,26 +69,28 @@ class Classifier():
         self.batchsize = 64
         self.epochs = 5
 
-
         self.n_stories = 4
         self.n_options = 1
 
         self.max_seqlen = max_seqlen
         self.vocab_size = vocab_size
         self.n_dummy = n_dummy
-        self.class_weight = {0: 1.,
-                             1: float(self.n_dummy)}
+        if self.n_dummy > 0:
+            self.class_weight = {0: 1.,
+                                 1: float(self.n_dummy)}
+        else:
+            self.class_weight = None
 
         # if the loss for class 1 were (pred-1)**2, then class weight makes it ((pred-1)**2) * (self.n_dummy)/1.
         # it increases the loss w.r.t the balance of training data labels
 
-    def build_model(self):
+    def build_scnn(self):
         # TODO: make it faster -> DONE to some extent
-        story1_input = Input(shape=(self.max_seqlen,))
-        story2_input = Input(shape=(self.max_seqlen,))
-        story3_input = Input(shape=(self.max_seqlen,))
-        story4_input = Input(shape=(self.max_seqlen,))
-        option_input = Input(shape=(self.max_seqlen,))
+        story1_input = Input(shape=(self.max_seqlen,), name="story1")
+        story2_input = Input(shape=(self.max_seqlen,), name="story2")
+        story3_input = Input(shape=(self.max_seqlen,), name="story3")
+        story4_input = Input(shape=(self.max_seqlen,), name="story4")
+        option_input = Input(shape=(self.max_seqlen,), name="story5")
         # inputs = concatenate([story1_input, story2_input, story3_input, story4_input, option_input], axis=1)
 
         # TimeDistributed enables to apply Embedding function uniformly for each of sentence{1, 2, 3, 4, 5}
@@ -54,7 +99,8 @@ class Classifier():
             self.embed_dim = self.pretrained_embedding.shape[1]
             embed_layer = Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
                                     input_length=self.max_seqlen, mask_zero=True,
-                                    weights=[self.pretrained_embedding], trainable=False)
+                                    weights=[self.pretrained_embedding], trainable=False,
+                                    name='embedding')
             '''
             _embed_layer = Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
                                      input_length=self.max_seqlen, mask_zero=True)
@@ -75,9 +121,10 @@ class Classifier():
         dense_layer = TimeDistributed(Dense(self.feature_dim, activation='relu'), name='dense')
         ending_dense_layer = TimeDistributed(Dense(self.n_stories * self.feature_dim, activation='relu')
         """
-        birnn_layer = Bidirectional(LSTM(self.hidden_dim, input_shape=(5, self.max_seqlen, self.embed_dim), return_sequences=False))
-        dense_layer = Dense(self.feature_dim, activation='relu')
-        ending_dense_layer = Dense(self.feature_dim, activation='relu')
+        birnn_layer = Bidirectional(LSTM(self.hidden_dim, input_shape=(5, self.max_seqlen, self.embed_dim),
+                                         return_sequences=False), name='bidirectional_lstm')
+        dense_layer = Dense(self.feature_dim, activation='relu', name='dense')
+        ending_dense_layer = Dense(self.feature_dim, activation='relu', name='dense_ending')
 
         # calculation
         # embeddings = embed_layer(inputs) # (None, 5, self.max_seqlen)  -> (None, 5, self.max_seqlen, output_dim)
@@ -96,6 +143,7 @@ class Classifier():
         birnn_outputs_op = birnn_layer(embeddings_op) # (None, self.max_seqlen, output_dim) -> (None, self.max_seqlen, 2 * hidden_dim)
 
         # TODO: use whole lstm outputs rather than the last output
+        # TODO: is it good to use different layer for different sentences?
 
         story_outputs_op = ending_dense_layer(birnn_outputs_op)  # -> (None, feature_dim)
         story_outputs_1 = multiply([story_outputs_op, dense_layer(birnn_outputs_1)]) # -> (None, feature_dim)
@@ -115,9 +163,9 @@ class Classifier():
         model = Model(inputs=inputs, outputs=fc)
 
         # for printing the output of intermediate layer
-
         # self.embedding_model = Model(inputs=[story_inputs, option_input],
         #                         outputs=model.get_layer('embedding').output)
+
         self.embedding_model = Model(inputs=inputs,
                                      outputs=embeddings)
 
@@ -128,16 +176,18 @@ class Classifier():
 
         rmsprop = optimizers.RMSprop()
         # sgd = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-        model.compile(optimizer=rmsprop, loss='mean_absolute_error', metrics=['accuracy'])
+        model.compile(optimizer=rmsprop, loss='mean_squared_error', metrics=['accuracy'])
         # plot_model(model, Path.image_save_path)
         print(model.summary())
         self.model = model
 
-    def train(self, inputs, outputs, save_output=True):
+    def train(self, inputs, outputs, small_inputs, save_output=True):
+        gradient_reporter = Customtrainingreporter(small_inputs, self.train_logger)
         if self.model == None:
             raise ValueError("self.model is None. run build_model() first.")
         hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize,
-                              shuffle=True, validation_split=0.2, verbose=1, class_weight=self.class_weight)
+                              shuffle=True, validation_split=0.2, verbose=1,
+                              class_weight=self.class_weight, callbacks=[])
         output_dict = {}
         if save_output:
             output_dict['inputs'] = inputs
