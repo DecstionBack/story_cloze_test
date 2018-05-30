@@ -1,0 +1,9 @@
+
+model: scnn built.
+validation data has 98280 samples with 0 and 19257 samples with 1.
+validation chance rate: 0.836162229765946
+test acc: 0.5857830037413148
+test data has 962 samples with 0 and 909 samples with 1.
+test chance rate: 0.5141635489043292
+output_dict saved: ../model/05302018_2249/output_dict.pkl
+data_dict saved: ../model/05302018_2249/data.pkl
