@@ -34,11 +34,12 @@ def main():
                             n_dummy = data.n_dummy, pretrained_embedding = data.embedding_matrix,
                             params_logger=params_logger, train_logger=train_logger)
 
-    classifier.build_model()
+    classifier.build_scnn()
     print("model built.")
 
     # inputs = [data.train_x[:, :4, :], data.train_x[:, 4:, :]]
     inputs = [data.train_x[:, i, :] for i in range(data.train_x.shape[1])]
+    small_inputs = [data.train_x[:100, i, :] for i in range(data.train_x.shape[1])]
     answers = data.y
     val_answers = answers[-int(len(answers)*0.2):]
     val_1_labels_num = np.sum(val_answers==1)
@@ -47,8 +48,10 @@ def main():
     train_logger.info("""validation data has {} samples with 0 and {} samples with 1.\nvalidation chance rate: {}"""
                       .format(val_0_labels_num, val_1_labels_num, chancerate))
 
-
-    output_dict = classifier.train(inputs, answers)
+    output_dict = classifier.train(inputs, answers, small_inputs)
+    # gradients = classifier.check_gradient(inputs)
+    # sum_gradients = [np.sum(grad) for grad in gradients]
+    # print("gradients: ", sum_gradients)
     data_dict = data.retrieve_data()
 
     # test_inputs_with_1 = [data.test_x[:, :4, :], data.test_e1]
