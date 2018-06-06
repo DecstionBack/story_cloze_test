@@ -55,7 +55,7 @@ class Classifier():
 
         # for scnn_CNN
         self.num_filters = 128
-        self.filter_sizes = [2, 3, 4]
+        self.filter_sizes = [2, 3, 4, 5, 6]
 
         self.batchsize = 64
         self.epochs = 10
@@ -139,11 +139,12 @@ class Classifier():
 
         hidden_feature = dense_layer(embeddings)
         pred = sf_layer(hidden_feature)
-        sgd = optimizers.SGD(lr=0.04)
+        # sgd = optimizers.SGD(lr=0.04)
+        rmsprop = optimizers.rmsprop()
         # add regularizer as specified in the paper
 
         model = Model(inputs=inputs, outputs=pred)
-        model.compile(optimizer=sgd, loss='mean_squared_error', metrics=['accuracy'])
+        model.compile(optimizer=rmsprop, loss='mean_squared_error', metrics=['accuracy'])
 
         self.embedding_model = Model(inputs = inputs, outputs = embeddings)
         print(model.summary())

@@ -47,18 +47,21 @@ def main():
                 w2v_limit=None)
 
     # classifier configuration and building
-    classifier = Classifier(model_name='scnn_CNN', max_seqlen=data.max_seqlen,
+    classifier = Classifier(model_name='niko', max_seqlen=data.max_seqlen,
                             vocab_size=data.vocab_size,
                             n_dummy=data.n_dummy, pretrained_embedding=data.embedding_matrix,
                             params_logger=params_logger, train_logger=train_logger)
     classifier.build_model()
 
     # training phase (model kept every 5 epochs)
+    print("train.shape: ", data.train_x.shape)
+
+    # if max_seqlen is too small, train_x has only 2dim shapes so it will raise error
     inputs = [data.train_x[:, i, :] for i in range(data.train_x.shape[1])]
     answers = data.y
 
     save_weight_path = os.path.join(save_model_path, "weights.{epoch:02d}-{val_loss:.2f}.hdf5")
-    output_dict = classifier.train(inputs, answers, save_output=False,
+    output_dict = classifier.train(inputs, answers, save_output=True,
                                    validation_split=data.validation_split, save_path=save_weight_path)
     data_dict = data.retrieve_data()
 

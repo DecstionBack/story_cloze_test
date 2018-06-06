@@ -15,7 +15,7 @@ class Data(Path):
     """
     data part:
     - currently we convert all the name in training data into either one of <m0>, <f0>, <p>, to make learning easier.
-    to reverege this, we should do this same procedure into test data when loading test dataset.
+    to reverege this, we should do this same procedure for test data when loading test dataset.
 
     - since <m0> <f0> <p> is not recorded in pretrained word embedding, we should allocate some non zero vector
     (e.g. average the embeddings of human names)
@@ -27,7 +27,10 @@ class Data(Path):
 
     def __init__(self, params_logger, train_logger, embedding_path, data_limit=None, w2v_limit=None, prepare_dummy=True):
         """
+        :param params_logger
+        :param train_logger
         :param data_limit: if specified, only top n dataset will be loaded.
+        :param w2v_limit
         :param prepare_dummy: if specified, augment train dataset with fake ending.
 
         others:
@@ -47,7 +50,7 @@ class Data(Path):
         """
 
         self.most_common = 20000
-        self.max_seqlen = 25
+        self.max_seqlen = 22
         self.n_dummy = 0 # will be updated in subsequent function
         self.validation_split = 0.2
 
@@ -158,7 +161,10 @@ class Data(Path):
             model = gensim.models.KeyedVectors.load_word2vec_format(datapath, binary=True, limit=self.w2v_limit)
             self.train_logger.info("word2vec limiting to {}".format(self.w2v_limit))
             embedding_dim = model.vector_size
+
+            # TODO: change it to normal distribution
             embedding_matrix = np.zeros((len(self.w2i_dict), embedding_dim))
+            # embedding_matrix = np.random.normal(TODO)
 
             for word, index in self.w2i_dict.items():
                 if model.vocab.get(word) == None:
