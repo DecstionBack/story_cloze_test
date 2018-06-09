@@ -90,5 +90,6 @@ def main():
         pickle.dump(data_dict, w, protocol=4)
         train_logger.info("data_dict saved: {}".format(save_data_path))
 
+        
 if __name__ == "__main__":
     main()

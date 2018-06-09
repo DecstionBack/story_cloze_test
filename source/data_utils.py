@@ -7,9 +7,7 @@ import copy
 import re
 import logging
 from sklearn.utils import shuffle
-
 from collections import Counter
-
 from sklearn.utils import shuffle
 from keras.models import Model
 from keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, Flatten, concatenate, multiply

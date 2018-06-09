@@ -1,5 +1,4 @@
 from path import Path
-
 import numpy as np
 from keras.models import Model
 # from keras.utils import plot_model
