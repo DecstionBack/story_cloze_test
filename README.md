@@ -7,6 +7,11 @@
 - self-weight layer and CNN omitted
 - only use word2vec feature as input feature
 - only use last output of LSTM instead of all outputs along timestep (if we use all outputs, how do we ignore the output corresponding to <pad> inputs?)
+- performs bad after epoch 5, 6(batchsize 64)
+
+### SCNN with CNN (acc: 57%)
+- basic structures are same as SCNN, but replaced bidirectional RNN with convolutional neural network. (to know about CNN for sentence, see http://www.aclweb.org/anthology/D14-1181)
+- CNN calculates pad symbol too, which might be the reason for low accuracy.
 
 ### Nico model (name not specified) (acc: 60%)
 - https://www.researchgate.net/publication/318740853_Resource-Lean_Modeling_of_Coherence_in_Commonsense_Stories

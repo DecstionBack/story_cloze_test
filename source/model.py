@@ -3,6 +3,8 @@ import numpy as np
 from keras.models import Model
 # from keras.utils import plot_model
 from keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, Flatten, Reshape, Lambda, TimeDistributed, concatenate, multiply
+from keras.layers import Convolution1D, MaxPooling1D
+
 from keras import optimizers
 from keras import backend as K
 import keras
@@ -10,6 +12,8 @@ import keras
 import tensorflow as tf
 
 class Customtrainingreporter(keras.callbacks.Callback):
+    # TODO: print result by epoch
+
     """
     custom calll back class for model.fit(). not used currently
     ref: https://keras.io/callbacks/
@@ -37,7 +41,7 @@ class Classifier():
     def __init__(self, model_name, max_seqlen, vocab_size, n_dummy, pretrained_embedding,
                  params_logger, train_logger
                  ):
-        self.available_models = ['niko', 'scnn']
+        self.available_models = ['niko', 'scnn', 'scnn_CNN']
         self.model_name = model_name
         self.embed_dim = 128
         self.hidden_dim = 64
@@ -48,8 +52,12 @@ class Classifier():
         self.params_logger = params_logger
         self.train_logger = train_logger
 
+        # for scnn_CNN
+        self.num_filters = 128
+        self.filter_sizes = [2, 3, 4, 5, 6]
+
         self.batchsize = 64
-        self.epochs = 50
+        self.epochs = 10
 
         self.n_stories = 4
         self.n_options = 1
@@ -81,8 +89,13 @@ class Classifier():
 
         elif self.model_name == 'scnn':
             self._build_scnn()
+
+        elif self.model_name == 'scnn_CNN':
+            self._build_scnn_CNN()
+
         else:
             raise IOError("model should be picked from {}".format(self.available_models))
+
         self.train_logger.info("model: {} built.".format(self.model_name))
 
     def _build_niko(self):
@@ -125,11 +138,12 @@ class Classifier():
 
         hidden_feature = dense_layer(embeddings)
         pred = sf_layer(hidden_feature)
-        sgd = optimizers.SGD(lr=0.04)
+        # sgd = optimizers.SGD(lr=0.04)
+        rmsprop = optimizers.rmsprop()
         # add regularizer as specified in the paper
 
         model = Model(inputs=inputs, outputs=pred)
-        model.compile(optimizer=sgd, loss='mean_squared_error', metrics=['accuracy'])
+        model.compile(optimizer=rmsprop, loss='mean_squared_error', metrics=['accuracy'])
 
         self.embedding_model = Model(inputs = inputs, outputs = embeddings)
         print(model.summary())
@@ -142,6 +156,7 @@ class Classifier():
         story3_input = Input(shape=(self.max_seqlen,), name="story3")
         story4_input = Input(shape=(self.max_seqlen,), name="story4")
         option_input = Input(shape=(self.max_seqlen,), name="story5")
+
         # inputs = concatenate([story1_input, story2_input, story3_input, story4_input, option_input], axis=1)
 
         # TimeDistributed enables to apply Embedding function uniformly for each of sentence{1, 2, 3, 4, 5}
@@ -232,19 +247,86 @@ class Classifier():
         print(model.summary())
         self.model = model
 
-    def train(self, inputs, outputs, save_output, save_path):
+    def _build_scnn_CNN(self):
+        story1_input = Input(shape=(self.max_seqlen,), name="story1")
+        story2_input = Input(shape=(self.max_seqlen,), name="story2")
+        story3_input = Input(shape=(self.max_seqlen,), name="story3")
+        story4_input = Input(shape=(self.max_seqlen,), name="story4")
+        option_input = Input(shape=(self.max_seqlen,), name="story5")
+        inputs = [story1_input, story2_input, story3_input, story4_input, option_input]
+
+        if self.use_pretrained_embedding:
+            # override the embed dimension size
+            self.embed_dim = self.pretrained_embedding.shape[1]
+            embed_layer = Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
+                                    input_length=self.max_seqlen, mask_zero=False,
+                                    weights=[self.pretrained_embedding], trainable=False,
+                                    name='embedding')
+        else:
+
+            embed_layer = Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim,
+                                    input_length=self.max_seqlen, mask_zero=True)
+
+        embeddings_1 = embed_layer(story1_input) # (None, self.max_seqlen) -> (None, sel.max_seqlen, output_dim)
+        embeddings_2 = embed_layer(story2_input)  # (None, self.max_seqlen) -> (None, sel.max_seqlen, output_dim)
+        embeddings_3 = embed_layer(story3_input)  # (None, self.max_seqlen) -> (None, sel.max_seqlen, output_dim)
+        embeddings_4 = embed_layer(story4_input)  # (None, self.max_seqlen) -> (None, sel.max_seqlen, output_dim)
+        embeddings_op = embed_layer(option_input) # (None, self.max_seqlen) -> (None, sel.max_seqlen, output_dim)
+
+        #TODO: make LSTM ignore <pad>
+        # == layer definition ==
+
+        # process for every sentence input
+        story_features = []
+        op_features = []
+
+        for embedding in [embeddings_1, embeddings_2, embeddings_3, embeddings_4, embeddings_op]:
+            # input_shape: (self.max_seqlen, self.embed_dim)
+            conv_for_every_size = []
+            for filter_size in self.filter_sizes:
+                conv = Convolution1D(filters=self.num_filters,
+                                          kernel_size=filter_size,
+                                          activation='relu'
+                                          )(embedding) # -> (None, self.max_seqlen - kernel_size + 1, self.num_filters)
+                conv = Flatten()(MaxPooling1D(pool_size=self.max_seqlen - filter_size + 1)(conv)) # -> ((1, self.num_filters)
+                conv_for_every_size.append(conv)
+            sentence_features = concatenate(conv_for_every_size) # -> (None, len(self.filter_sizes) * self.num_filters)
+
+            if len(story_features) == 4:
+                op_feature = sentence_features
+            else:
+                story_features.append(sentence_features)
+
+        story_features = [multiply([op_feature, feature]) for feature in story_features]
+        story_features = concatenate(story_features) # -> (None, 4 * len(self.filter_sizes * self.num_filters)
+
+        # we only need the likelihood of being true ending so its squashed into scalar
+        story_features = Dense(64, activation='relu')(story_features)
+        fc = Dense(1, activation='sigmoid', name='probability')(story_features)
+
+        model = Model(inputs=inputs, outputs=fc)
+
+        # rmsprop = optimizers.RMSprop()
+        sgd = optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+        model.compile(optimizer=sgd, loss='mean_squared_error', metrics=['accuracy'])
+        # plot_model(model, Path.image_save_path)
+        print(model.summary())
+        self.model = model
+
+
+    def train(self, inputs, outputs, save_output, validation_split, save_path):
         if self.model == None:
             raise ValueError("self.model is None. run build_model() first.")
 
         modelsave_callback = keras.callbacks.ModelCheckpoint(save_path, monitor='val_loss', verbose=0, save_best_only=False, save_weights_only=False, mode='auto', period=5)
 
         hist = self.model.fit(inputs, outputs, epochs=self.epochs, batch_size=self.batchsize,
-                              shuffle=True, validation_split=0.2, verbose=1,
+                              shuffle=True, validation_split=validation_split, verbose=1,
                               class_weight=self.class_weight, callbacks=[modelsave_callback])
         output_dict = {}
         if save_output:
             output_dict['inputs'] = inputs
-            output_dict['embedding'] = self.embedding_model.predict(inputs)
+            # output_dict['embedding'] = self.embedding_model.predict(inputs)
             # output_dict['bilstm'] = self.bilstm_model.predict(inputs)
             output_dict['probability'] = self.model.predict(inputs)
         return output_dict

@@ -1,19 +1,13 @@
 import numpy as np
-import os
-import pickle
 import pandas as pd
-import csv
 import copy
 import re
 import logging
+import gensim
+
 from sklearn.utils import shuffle
 from collections import Counter
 from sklearn.utils import shuffle
-from keras.models import Model
-from keras.layers import Input, LSTM, Dense, Embedding, Bidirectional, Flatten, concatenate, multiply
-from keras.layers.convolutional import Conv1D
-from keras.layers.pooling import MaxPooling2D
-
 from path import Path
 
 class Data(Path):
@@ -21,7 +15,7 @@ class Data(Path):
     """
     data part:
     - currently we convert all the name in training data into either one of <m0>, <f0>, <p>, to make learning easier.
-    to reverege this, we should do this same procedure into test data when loading test dataset.
+    to reverege this, we should do this same procedure for test data when loading test dataset.
 
     - since <m0> <f0> <p> is not recorded in pretrained word embedding, we should allocate some non zero vector
     (e.g. average the embeddings of human names)
@@ -31,9 +25,12 @@ class Data(Path):
 
     """
 
-    def __init__(self, logger, data_limit=None, prepare_dummy=True):
+    def __init__(self, params_logger, train_logger, embedding_path, data_limit=None, w2v_limit=None, prepare_dummy=True):
         """
+        :param params_logger
+        :param train_logger
         :param data_limit: if specified, only top n dataset will be loaded.
+        :param w2v_limit
         :param prepare_dummy: if specified, augment train dataset with fake ending.
 
         others:
@@ -53,24 +50,29 @@ class Data(Path):
         """
 
         self.most_common = 20000
-        self.max_seqlen = 25
+        self.max_seqlen = 22
         self.n_dummy = 0 # will be updated in subsequent function
+        self.validation_split = 0.2
+
         self.prepare_dummy = prepare_dummy
         self.data_limit = data_limit
-        self.logger = logger
+        self.w2v_limit = w2v_limit
+        self.params_logger = params_logger
+        self.train_logger = train_logger
 
         self.unk = "<UNK>"
         self.pad = "<PAD>"
-        # TODO: do we really need bos, eos, pad ?
 
+        self.embedding_path = embedding_path
         self.train_dataset, self.y = self.load_train_text(Path.train_file_path)
         self.vocab = self.create_vocab()  # used in test
         self.vocab_size = len(self.vocab) # contain <PAD>
         self.w2i_dict = self.create_w2i_dict()  # contain <PAD>
-        self.i2w_dict = self.create_i2w_dict()  # used in test
+        self.i2w_dict = self.create_i2w_dict()  # used in test?
+
         self.train_dataset_ids = self.convert_w2i_dataset(self.train_dataset)
         self.train_x = self.train_dataset_ids
-        self.embedding_matrix = self.create_pretrained_embedding_matrix(Path.glove_path)
+        self.embedding_matrix = self.create_pretrained_embedding_matrix(self.embedding_path)
 
         self.test_dataset, self.test_answers = self.load_test_text(Path.val_file_path)
         self.test_dataset_ids = self.convert_w2i_dataset(self.test_dataset)
@@ -81,6 +83,7 @@ class Data(Path):
         params_string += '''
         ==================================================
         words with frequency less than {} is not in vocab.
+        pretrained embedding: {}
         maximum sentencelength: {}
         train_x.shape:  {}
         test_x.shape:   {}
@@ -88,12 +91,12 @@ class Data(Path):
         test_e2.shape:  {}
         len(vocab):     {}
         ==================================================
-        '''.format(self.most_common, self.max_seqlen, self.train_x.shape,
+        '''.format(self.embedding_path, self.most_common, self.max_seqlen, self.train_x.shape,
                    self.test_x.shape, self.test_e1.shape, self.test_e2.shape, len(self.vocab))
         params_string += "\n".join(["{}: {}".format(key, val)
                                   for key, val in Path.__dict__.items() if key[0] != '_'])
-        self.logger.info(params_string)
-        self.logger.info("data loaded.")
+        self.params_logger.info(params_string)
+        self.train_logger.info("data loaded.")
 
     def retrieve_data(self):
         data_dict = {}
@@ -127,32 +130,48 @@ class Data(Path):
         the i-th row of matrix should represent the embedding for word whose id is i.
         self.w2i_dict
         """
-        self.logger.info("creating embedding matrix...")
+        self.train_logger.info("creating embedding matrix...")
         word_to_embedding = {}
 
-        # create the word2embedding dictionary
-        f = open(datapath)
-        with open(datapath, 'r') as f:
-            for line in f:
-                values = line.split()
-                word = values[0]
-                vector = np.asarray(values[1:], dtype='float32')
-                word_to_embedding[word] = vector
+        if datapath[-3:] == 'txt':
+            # create the word2embedding dictionary from glove
+            f = open(datapath)
+            with open(datapath, 'r') as f:
+                for line in f:
+                    values = line.split()
+                    word = values[0]
+                    vector = np.asarray(values[1:], dtype='float32')
+                    word_to_embedding[word] = vector
+            # create the embedding matrix by the above dictionary
+            embedding_dim = len(vector)
+            embedding_matrix = np.zeros((len(self.w2i_dict), embedding_dim))
 
-        # create the embedding matrix by the above dictionary
-        embedding_dim = len(vector)
-        embedding_matrix = np.zeros((len(self.w2i_dict), embedding_dim))
+            for word, index in self.w2i_dict.items():
+                embedding = word_to_embedding.get(word)
 
-        for word, index in self.w2i_dict.items():
-            embedding = word_to_embedding.get(word)
+                if embedding is None:
+                    # if the word is in dataset but not found in pretrained vector, leave the corresponding row as zero vectors
+                    self.params_logger.info("word: {} not found in pretrained embedding.".format(word))
 
-            if embedding is None:
-                # if the word is in dataset but not found in pretrained vector, leave the corresponding row as zero vectors
-                self.logger.info("word: {} not found in pretrained embedding.".format(word))
+                else:
+                    embedding_matrix[index] = embedding
+                    self.params_logger.debug("word: {}\t index:{}\t matrix[index]:{}\t w2v[word]:{}".format(word, index, embedding_matrix[index], word_to_embedding[word]))
 
-            else:
-                embedding_matrix[index] = embedding
-                self.logger.debug("word: {}\t index:{}\t matrix[index]:{}\t w2v[word]:{}".format(word, index, embedding_matrix[index], word_to_embedding[word]))
+        else:
+            model = gensim.models.KeyedVectors.load_word2vec_format(datapath, binary=True, limit=self.w2v_limit)
+            self.train_logger.info("word2vec limiting to {}".format(self.w2v_limit))
+            embedding_dim = model.vector_size
+
+            # TODO: change it to normal distribution
+            embedding_matrix = np.zeros((len(self.w2i_dict), embedding_dim))
+            # embedding_matrix = np.random.normal(TODO)
+
+            for word, index in self.w2i_dict.items():
+                if model.vocab.get(word) == None:
+                    self.params_logger.info("word: {} not found in pretrained embedding.".format(word))
+
+                else:
+                    embedding_matrix[index] = model[word]
 
         return embedding_matrix
 
@@ -168,14 +187,18 @@ class Data(Path):
         stories = (df[['InputSentence1', 'InputSentence2', 'InputSentence3', 'InputSentence4',
                        'RandomFifthSentenceQuiz1', 'RandomFifthSentenceQuiz2']])
         answers = np.array(df['AnswerRightEnding'].tolist())
-
         lines = stories.values.tolist()
-        if self.max_seqlen:
-            lines = ([[[self.pad] * (self.max_seqlen - len(self.clean_text(string).split())) +
-                       self.clean_text(string).split()
-                       for string in line] for line in lines])
-
+        lines = ([[[self.pad] * (self.max_seqlen - len(self.clean_text(string).split())) +
+                   self.clean_text(string).split()
+                   for string in line] for line in lines])
         self.test_story_ids = story_ids
+
+        test_label1 = np.sum(answers==1)
+        test_label2 = np.sum(answers==2)
+        test_chancerate = max(test_label1, test_label2)/len(answers)
+        self.train_logger.info("""test data has {} samples with 0 and {} samples with 1.\ntest chance rate: {}"""
+                          .format(test_label1, test_label2, test_chancerate))
+
         return lines, answers
 
     def augment_with_fake(self, df):
@@ -210,26 +233,20 @@ class Data(Path):
         :param datapath:
         :return:
         """
-        self.logger.info("loading dataset...(assuming 5 fake endings for each stories")
-        if self.data_limit:
-            self.logger.info("\tdata_limit:{}".format(self.data_limit))
+        self.params_logger.info("loading dataset...(assuming 5 fake endings for each stories")
 
         df = pd.read_csv(datapath)
         if self.data_limit:
+            self.params_logger.info("\tdata_limit:{}".format(self.data_limit))
             df = df.loc[:self.data_limit, :]
-
 
         stories = df[['sentence1', 'sentence2', 'sentence3', 'sentence4', 'sentence5']]
         answers = df['is_real_ending']
 
         lines = stories.values.tolist()
-        if self.max_seqlen:
-            lines = ([[ [self.pad] * (self.max_seqlen - len(self.clean_text(string).split()))
-                        + self.clean_text(string).split()
-                       for string in line] for line in lines])  # extract 'sentence1 - 5'
-        else:
-            raise AttributeError("specify max seqlen.")
-
+        lines = ([[ [self.pad] * (self.max_seqlen - len(self.clean_text(string).split()))
+                    + self.clean_text(string).split()
+                    for string in line] for line in lines])  # extract 'sentence1 - 5'
         lines = np.array(lines)
 
         # shuffle the data
@@ -237,42 +254,27 @@ class Data(Path):
         lines = lines[random_indices]
         answers = answers[random_indices]
 
+        # calculate the chance rate for validation dataset
+        val_answers = answers[-int(len(answers)*self.validation_split):]
+        val_label0 = np.sum(val_answers==0)
+        val_label1 = np.sum(val_answers==1)
+        chancerate = max(val_label0, val_label1)/(len(val_answers))
+
+        self.train_logger.info("""validation data has {} samples with 0 and {} samples with 1.\nvalidation chance rate: {}"""
+                      .format(val_label0, val_label1, chancerate))
         self.n_dummy = 5
-        """
-        stories = df[['sentence1', 'sentence2', 'sentence3', 'sentence4', 'sentence5']]
-        answers = np.ones(len(stories)) # because 'sentence5' is always true ending.
+        self.params_logger.info("WARNING: number of dummy sentences are assumed to be 5 by hard coding.")
 
-        if self.prepare_dummy:
-            stories, answers = self.augment_with_fake(stories)
-        lines = stories.values.tolist()
-
-        if self.max_seqlen:
-            lines = ([[ [self.pad] * (self.max_seqlen - len(self.clean_text(string).split()))
-                        + self.clean_text(string).split()
-                       for string in line] for line in lines])  # extract 'sentence1 - 5'
-        else:
-            lines = [[self.clean_text(string).split() for string in line[2:]] for line in lines]
-
-        lines = np.array(lines)
-
-        # shuffle the data
-        random_indices = np.random.permutation(lines.shape[0])
-        lines = lines[random_indices]
-        answers = answers[random_indices]
-
-        # self.train_story_ids = story_ids
-        # self.train_story_titles = story_titles
-        """
         return lines, answers
 
     def create_vocab(self):
-        self.logger.info("creating vocabulary...")
+        self.train_logger.info("creating vocabulary...")
         flattened_dataset = [word for sentences in self.train_dataset for sentence in sentences[1:] for word in
                              sentence]
-        self.logger.info("============== limiting vocabulary to top {}.==================".format(self.most_common))
+        self.params_logger.info("============== limiting vocabulary to top {}.==================".format(self.most_common))
         # vocab = dict(Counter(flattened_dataset), most_common=self.most_common)
         vocab = dict(Counter(flattened_dataset).most_common(self.most_common))
-        self.logger.info("\ttop {} frequent vocabulary (and <UNK>) will be used..".format(self.most_common))
+        self.params_logger.info("\ttop {} frequent vocabulary (and <UNK>) will be used..".format(self.most_common))
         vocab[self.unk] = 1
         return vocab
 
